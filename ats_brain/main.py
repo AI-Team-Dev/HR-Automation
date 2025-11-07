@@ -60,9 +60,37 @@ def extract_job_title_from_text(jd_text: str) -> Optional[str]:
     """Extract job title from JD text using common patterns."""
     if not jd_text:
         return None
+    # If the JD is a single line with sections (e.g., "Title  Location: ... Skills: ..."),
+    # cut off everything after the first section label.
+    sec_label = re.search(r"\b(Location|Experience|Skills?|Responsibilities|Requirements|Summary|About|Company)\s*:", jd_text, re.IGNORECASE)
+    if sec_label:
+        prefix = jd_text[:sec_label.start()].strip()
+        if prefix:
+            # Use the last non-empty line from the prefix as candidate
+            pre_lines = [ln.strip() for ln in prefix.split("\n") if ln.strip()]
+            if pre_lines:
+                candidate = pre_lines[-1]
+                candidate = re.sub(r"\s+", " ", candidate)
+                if 3 <= len(candidate) <= 100 and candidate[0].isalpha():
+                    return candidate
+
+    # Fallback for compact single-line JDs: capture leading role phrase
+    m_head = re.match(r"^\s*([A-Za-z][A-Za-z0-9 /&+\-]{3,80})(?:\s{2,}|\s+(?:Location|Experience|Skills?|Responsibilities|Requirements|Summary|About|Company)\s*:)", jd_text, re.IGNORECASE)
+    if m_head:
+        cand = re.sub(r"\s+", " ", m_head.group(1)).strip()
+        if cand and not re.match(r"^skills?\b", cand, re.IGNORECASE) and 3 <= len(cand) <= 100:
+            return cand
+
     # Look for common explicit labels in the first ~20 lines
     lines = [ln.strip() for ln in jd_text.split("\n") if ln.strip()]
     head = lines[:20]
+    # Avoid picking section headers as titles
+    SECTION_PREFIXES = {
+        "skills", "responsibilities", "requirements", "qualifications",
+        "about", "company", "summary", "benefits", "location",
+        "job description", "about us", "who we are", "key skills",
+        "experience", "education"
+    }
     patterns = [
         r"(?:Job\s*Title|Position|Role|Title)\s*[:\-]\s*([A-Z][A-Za-z0-9\s/&,+-]{3,80})",
         r"(?:Looking for|Seeking|Hiring)\s+(?:a|an)?\s*([A-Z][A-Za-z0-9\s/&,+-]{3,80})",
@@ -106,6 +134,9 @@ def extract_job_title_from_text(jd_text: str) -> Optional[str]:
         return None
 
     for ln in head:
+        low = ln.lower()
+        if any(low.startswith(p + ":") for p in SECTION_PREFIXES):
+            continue
         for pat in patterns:
             m = re.search(pat, ln, re.IGNORECASE)
             if m:
@@ -113,11 +144,17 @@ def extract_job_title_from_text(jd_text: str) -> Optional[str]:
                 title = _postprocess_title(title) or title
                 if 3 <= len(title) <= 100:
                     return title
-    # Heuristic: first significant capitalized line that looks like a title
+    # Heuristic: first non-section capitalized line that looks like a title
     if head:
-        first_line = _postprocess_title(head[0])
-        if first_line and 5 <= len(first_line) <= 100 and first_line[0].isalpha():
-            return first_line
+        for candidate in head:
+            low = candidate.lower()
+            if any(low.startswith(p + ":") for p in SECTION_PREFIXES):
+                continue
+            first_line = _postprocess_title(candidate)
+            if first_line and 5 <= len(first_line) <= 100 and first_line[0].isalpha():
+                # Guard against single skill lines like "Python"
+                if not re.match(r"^(skills?|tools?)\b", low):
+                    return first_line
     return None
 
 # Discipline extraction

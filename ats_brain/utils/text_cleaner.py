@@ -37,8 +37,8 @@ def normalize_text(text: str) -> str:
     lines = [line.strip() for line in lines]
     text = "\n".join(lines)
     
-    # Final cleanup: remove any remaining excessive whitespace
-    text = re.sub(r"\s+", " ", text)
+    # Final cleanup: remove excessive spaces/tabs but preserve newlines
+    text = re.sub(r"[ \t]+", " ", text)
     
     # Remove leading/trailing whitespace
     return text.strip()

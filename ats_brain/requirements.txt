@@ -15,6 +15,7 @@ pydantic-settings==2.5.2
 sentence-transformers==3.2.1
 scikit-learn==1.5.2
 spacy==3.7.5
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 numpy==1.26.4  # Compatible with spacy 3.7.5
 
 # Document Processing

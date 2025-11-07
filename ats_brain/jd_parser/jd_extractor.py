@@ -19,42 +19,126 @@ EDUCATION_REGEX = re.compile(
 )
 
 
+def extract_job_title(jd_text: str) -> Optional[str]:
+    if not jd_text:
+        return None
+
+    lines = [ln.strip() for ln in jd_text.split("\n") if ln.strip()]
+    head = lines[:25]
+
+    SECTION_PREFIXES = {
+        "skills", "responsibilities", "requirements", "qualifications",
+        "about", "company", "summary", "benefits", "location",
+        "job description", "about us", "who we are", "key skills",
+        "desired skills", "mandatory skills"
+    }
+
+    TITLE_HINT_WORDS = {
+        "engineer", "developer", "designer", "manager", "analyst", "consultant",
+        "administrator", "specialist", "lead", "intern", "scientist", "architect",
+        "coordinator", "executive", "technician", "officer"
+    }
+
+    patterns = [
+        r"(?:Job\s*Title|Position|Role|Title)\s*[:\-]\s*([A-Z][A-Za-z0-9\s/&,+-]{3,80})",
+        r"(?:Looking for|Seeking|Hiring)\s+(?:a|an)?\s*([A-Z][A-Za-z0-9\s/&,+-]{3,80})",
+        r"^([A-Z][A-Za-z0-9\s/&,+-]{3,80})\s*(?:Position|Job|Role)\b",
+    ]
+
+    def _postprocess_title(raw: str) -> Optional[str]:
+        t = raw.strip()
+        for delim in [",", ".", " - ", " – ", " — ", " to ", " with ", " in ", " for "]:
+            if delim in t:
+                t = t.split(delim, 1)[0].strip()
+        t = re.sub(r"^(?:a|an|the)\s+", "", t, flags=re.IGNORECASE)
+        t = re.sub(r"\s+", " ", t)
+        t = re.sub(r"[^A-Za-z/&+\-\s]", "", t)
+        if 3 <= len(t) <= 80:
+            return t
+        return None
+
+    # --- Step 1: Regex-based detection ---
+    for ln in head:
+        low = ln.lower()
+        if any(low.startswith(p) for p in SECTION_PREFIXES):
+            continue
+        for pat in patterns:
+            m = re.search(pat, ln, re.IGNORECASE)
+            if m:
+                title = _postprocess_title(m.group(1))
+                if title and not any(k in title.lower() for k in SECTION_PREFIXES):
+                    return title
+
+    # --- Step 2: Heuristic detection ---
+    for ln in head:
+        low = ln.lower()
+        if any(p in low for p in SECTION_PREFIXES):
+            continue
+        words = ln.split()
+        if 2 <= len(words) <= 6 and any(w.lower() in TITLE_HINT_WORDS for w in words):
+            clean_title = _postprocess_title(ln)
+            if clean_title and not re.search(r"skills?", clean_title, re.IGNORECASE):
+                return clean_title
+
+    # --- Step 3: Fallback: first decent line with title-like pattern ---
+    for candidate in head:
+        low = candidate.lower()
+        if any(p in low for p in SECTION_PREFIXES):
+            continue
+        if len(candidate.split()) <= 8 and any(
+            kw in low for kw in TITLE_HINT_WORDS
+        ):
+            clean_title = _postprocess_title(candidate)
+            if clean_title:
+                return clean_title
+
+    return None
+
+
 def extract_experience(jd_text: str) -> Optional[str]:
     """
-    Extract experience requirement from JD text.
-    
-    Args:
-        jd_text: Job description text
-        
-    Returns:
-        Experience string (e.g., "5+ years") or None
+    Extract a conservative minimum years requirement from common patterns.
+    Returns like "3+ years" when found, else None.
     """
-    matches = EXPERIENCE_REGEX.findall(jd_text)
-    if matches:
-        # Get the highest mentioned years
-        years = [int(m) for m in matches]
-        max_years = max(years)
-        return f"{max_years}+ years"
+    if not jd_text:
+        return None
+    t = str(jd_text)
+    m = re.search(r"(\d+)\s*[–\-to]+\s*(\d+)\s*(?:years?|yrs?)", t, re.IGNORECASE)
+    if m:
+        return f"{int(m.group(1))}+ years"
+    m = re.search(r"at\s*least\s*(\d+)\s*(?:years?|yrs?)", t, re.IGNORECASE)
+    if m:
+        return f"{int(m.group(1))}+ years"
+    m = re.search(r"minimum\s*(\d+)\s*(?:years?|yrs?)", t, re.IGNORECASE)
+    if m:
+        return f"{int(m.group(1))}+ years"
+    m = re.search(r"(\d+)\s*\+?\s*(?:years?|yrs?)", t, re.IGNORECASE)
+    if m:
+        return f"{int(m.group(1))}+ years"
     return None
 
 
 def extract_education(jd_text: str) -> Optional[str]:
     """
-    Extract education requirement from JD text.
-    
-    Args:
-        jd_text: Job description text
-        
-    Returns:
-        Education requirement string or None
+    Extract the sentence containing an education requirement keyword.
+    Returns the sentence text for downstream parsing.
     """
-    match = EDUCATION_REGEX.search(jd_text)
-    if match:
-        # Extract surrounding context
-        start = max(0, match.start() - 30)
-        end = min(len(jd_text), match.end() + 30)
-        context = jd_text[start:end]
-        return context.strip()
+    if not jd_text:
+        return None
+    sentences = split_sentences(jd_text)
+    # Accept explicit levels and common acronyms; also accept generic 'degree in <discipline>'
+    edu_pat = re.compile(
+        r"\b(bachelor|master|phd|doctorate|bs|ms|b\.tech|m\.tech|btech|mtech|b\.e|m\.e|be|me)\b|\bdegree\s+in\b",
+        re.IGNORECASE,
+    )
+    for s in sentences:
+        if edu_pat.search(s):
+            return s.strip()
+    m = EDUCATION_REGEX.search(jd_text)
+    if m:
+        start = max(0, m.start() - 30)
+        end = min(len(jd_text), m.end() + 30)
+        return jd_text[start:end].strip()
     return None
 
 
@@ -97,6 +181,10 @@ def parse_job_description(
     sentences = split_sentences(normalized_text)
     summary = ". ".join(sentences[:2]) if sentences else (title or "")
     
+    if not title:
+        # Use raw text (with newlines) for better title detection
+        title = extract_job_title(jd_text)
+
     result: Dict[str, Any] = {
         "title": title,
         "experience": experience,

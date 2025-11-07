@@ -195,8 +195,8 @@ def extract_resume_text(resume_bytes: bytes, use_ocr_fallback: bool = False) -> 
     # Extract skills
     skills = extract_skills(normalized_text)
 
-    # Extract personal/contact details
-    personal_details = _extract_personal_details(normalized_text)
+    # Extract personal/contact details on original text to better preserve header structure
+    personal_details = _extract_personal_details(original_text)
 
     return {
         "text": normalized_text,
@@ -255,24 +255,154 @@ def _extract_personal_details(text: str) -> Dict[str, Any]:
     website = next((u for u in urls if ("linkedin.com" not in u.lower() and "github.com" not in u.lower())), None)
 
     # Address heuristics
+    countries = {
+        "india","usa","united states","uk","united kingdom","canada","australia",
+        "germany","singapore","uae","dubai"
+    }
+    states = {
+        "maharashtra","karnataka","tamil nadu","telangana","delhi","ncr","gujarat",
+        "west bengal","uttar pradesh","rajasthan","haryana","punjab","kerala"
+    }
+    cities = {
+        "mumbai","pune","bengaluru","bangalore","hyderabad","chennai","delhi",
+        "new delhi","noida","gurgaon","gurugram","kolkata","ahmedabad","jaipur"
+    }
+
+    def _has_geo(s: str) -> bool:
+        low = s.lower()
+        return any(w in low for w in countries | states | cities)
+
+    def _looks_like_phone_email(s: str) -> bool:
+        return re.search(r"(phone|email|github|linkedin|https?://|@)", s, flags=re.IGNORECASE) is not None
+
+    def _has_pincode(s: str) -> bool:
+        return re.search(r"\b\d{5,6}\b", s) is not None
+    
+    def _looks_like_sentence(s: str) -> bool:
+        # crude heuristic: presence of common verbs or ends with period and multiple words
+        verbs = r"taught|developed|built|designed|implemented|maintained|led|managed|conducted|mentored|worked|participated|created|collaborated|performed"
+        if re.search(rf"\b({verbs})\b", s, flags=re.IGNORECASE):
+            return True
+        if s.endswith('.') and len(s.split()) > 6:
+            return True
+        return False
+    def _sanitize_address(s: Optional[str]) -> Optional[str]:
+        if not s:
+            return None
+        s = re.sub(r"\s+", " ", s).strip()
+        cut_terms = [
+            "profile", "professional", "summary", "experience", "education",
+            "projects", "technical", "skills", "contact", "languages",
+            "hobbies", "interests", "phone", "email", "github", "linkedin",
+            "website", "portfolio"
+        ]
+        seps = ["|", "•", "●", "□", "■", "▪", "·"]
+        cut_idx = len(s)
+        for sep in seps:
+            if sep in s:
+                cut_idx = min(cut_idx, s.find(sep))
+        for term in cut_terms:
+            m = re.search(rf"\b{term}\b", s, flags=re.IGNORECASE)
+            if m:
+                cut_idx = min(cut_idx, m.start())
+        s = s[:cut_idx].strip()
+        s = re.sub(r"^(?:address|location|current location)[:\-\s]*", "", s, flags=re.IGNORECASE).strip()
+        parts = [p.strip() for p in s.split(",") if p.strip()]
+        if len(parts) > 3:
+            parts = parts[:3]
+        s = ", ".join(parts)
+        s = re.sub(r"[^A-Za-z0-9,\-\s]", "", s).strip()
+        if len(s) > 80:
+            s = s[:80].rstrip(",- ")
+        # Reject if line is likely noise or lacks geo/pincode
+        if _looks_like_phone_email(s) or _looks_like_sentence(s):
+            return None
+        if not (_has_geo(s) or _has_pincode(s)):
+            return None
+        return s if 2 <= len(s) <= 80 else None
+    
+    def _is_label_line(ln: str, targets: list[str]) -> Optional[str]:
+        raw = ln.strip()
+        compact = re.sub(r"[^A-Za-z]", "", raw).lower()
+        for t in targets:
+            if compact.startswith(t.replace(" ", "").lower()):
+                return raw
+        return None
+    
+    def _after_label(raw: str) -> str:
+        if ":" in raw:
+            return raw.split(":", 1)[1]
+        if "-" in raw:
+            return raw.split("-", 1)[1]
+        return raw
     address = None
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     # Try explicit label
     for i, ln in enumerate(lines):
-        if ln.lower().startswith("address"):
+        if ln.lower().startswith("address") or _is_label_line(ln, ["address"]):
             parts = [ln]
             if i + 1 < len(lines):
                 parts.append(lines[i + 1])
             if i + 2 < len(lines):
                 parts.append(lines[i + 2])
-            address = ", ".join([re.sub(r"^(address[:\-\s]*)", "", p, flags=re.IGNORECASE).strip() for p in parts if p])
+            cleaned = []
+            for p in parts:
+                p2 = re.sub(r"^(address[:\-\s]*)", "", p, flags=re.IGNORECASE).strip()
+                cleaned.append(p2)
+            address = ", ".join([c for c in cleaned if c])
+            address = _sanitize_address(address)
             break
+    if not address:
+        for i, ln in enumerate(lines):
+            if (ln.lower().startswith("location") or ln.lower().startswith("current location") or
+                _is_label_line(ln, ["location", "current location"])):
+                parts = [ln]
+                if i + 1 < len(lines):
+                    parts.append(lines[i + 1])
+                cleaned = []
+                for p in parts:
+                    p2 = re.sub(r"^(?:location|current location)[:\-\s]*", "", p, flags=re.IGNORECASE).strip()
+                    if p2 == p:
+                        p2 = _after_label(p2)
+                    cleaned.append(p2)
+                address = ", ".join([c for c in cleaned if c])
+                address = _sanitize_address(address)
+                if address:
+                    break
+    # Inline 'Location:' anywhere in the header text (not just line-start), including spaced letters
+    if not address:
+        m = re.search(r"(?:\b[Ll]\s*[Oo]\s*[Cc]\s*[Aa]\s*[Tt]\s*[Ii]\s*[Oo]\s*[Nn]\b|\bcurrent\s*location\b)\s*[:\-]\s*([A-Za-z ,\-]{2,120})", text, flags=re.IGNORECASE)
+        if m:
+            address = _sanitize_address(m.group(1).strip())
     # Try postal code typical patterns if not found
     if not address:
         for ln in lines[:15]:  # header region
+            # avoid phone/email lines, and ensure line has comma or geo hint with the pincode
             if re.search(r"\b\d{5,6}\b", ln):
-                address = ln
-                break
+                if re.search(r"(phone|email|github|linkedin|https?://)", ln, flags=re.IGNORECASE):
+                    continue
+                cand = _sanitize_address(ln)
+                if cand:
+                    address = cand
+                    break
+    if not address:
+        country_hint = re.compile(r"\b(india|usa|united states|uk|canada|australia|singapore|germany|uae|dubai)\b", re.IGNORECASE)
+        for ln in lines[:20]:
+            if country_hint.search(ln):
+                if not re.search(r"(phone|email|github|linkedin|https?://)", ln, flags=re.IGNORECASE):
+                    cand = _sanitize_address(ln.strip())
+                    if cand:
+                        address = cand
+                        break
+    if not address:
+        for ln in lines[:20]:
+            if _looks_like_phone_email(ln):
+                continue
+            if _has_geo(ln):
+                cand = _sanitize_address(ln)
+                if cand:
+                    address = cand
+                    break
 
     return {
         "email": email,
