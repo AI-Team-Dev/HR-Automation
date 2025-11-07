@@ -98,14 +98,14 @@ def extract_job_title(jd_text: str) -> Optional[str]:
 def extract_experience(jd_text: str) -> Optional[str]:
     """
     Extract a conservative minimum years requirement from common patterns.
-    Returns like "3+ years" when found, else None.
+    Returns like "3-5 years" for ranges or "3+ years" for minimum styles, else None.
     """
     if not jd_text:
         return None
     t = str(jd_text)
     m = re.search(r"(\d+)\s*[–\-to]+\s*(\d+)\s*(?:years?|yrs?)", t, re.IGNORECASE)
     if m:
-        return f"{int(m.group(1))}+ years"
+        return f"{int(m.group(1))}-{int(m.group(2))} years"
     m = re.search(r"at\s*least\s*(\d+)\s*(?:years?|yrs?)", t, re.IGNORECASE)
     if m:
         return f"{int(m.group(1))}+ years"

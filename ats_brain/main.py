@@ -471,7 +471,8 @@ def _generate_match_reasoning(
     experience_match = True  # If JD doesn't specify, candidate is considered satisfying
     min_required = parse_years_requirement(jd_experience)
     if min_required is not None:
-        cand_years = parse_years_from_resume(resume_text)
+        cand_years_raw = parse_years_from_resume(resume_text)
+        cand_years = 0 if (cand_years_raw is None and min_required == 0) else cand_years_raw
         if cand_years is not None and cand_years >= min_required:
             experience_match = True
             strengths.append(f"Meets/exceeds experience requirement ({cand_years} years)")
@@ -875,7 +876,10 @@ async def match_jd_resume(
         relevant_sections = [s for s in jd_sentences if any(k.lower() in s.lower() for k in key_terms)][:3]
 
         # Experience details (extract numeric years from resume)
-        resume_years = parse_years_from_resume(resume_text_final)
+        resume_years_raw = parse_years_from_resume(resume_text_final)
+        # When JD allows 0 experience, treat missing candidate years as 0
+        min_req_tmp = parse_years_requirement(jd_parsed.get("experience"))
+        resume_years = 0 if (resume_years_raw is None and min_req_tmp == 0) else resume_years_raw
         jd_experience_req = jd_parsed.get("experience")
 
         # Education alignment (robust parsing + ranking)
