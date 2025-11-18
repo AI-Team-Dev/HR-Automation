@@ -104,13 +104,15 @@ def _parse_scoring_response(raw_response: str) -> Dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("Model response JSON must be an object")
 
-    # 1) Derive match_score - be very flexible
+    # 1) Derive match_score - be very flexible with nested structure
     overall_eval = data.get("overall_evaluation") or {}
     jd_analysis = data.get("jd_requirement_analysis") or {}
     semantic = jd_analysis.get("semantic_match") or {}
     skills_analysis = jd_analysis.get("skills_analysis") or {}
     exp_analysis = jd_analysis.get("experience_analysis") or {}
     edu_analysis = jd_analysis.get("education_analysis") or {}
+    candidate_profile = data.get("candidate_profile") or {}
+    candidate_exp = candidate_profile.get("experience") or {}
 
     match_score = data.get("match_score")
     if match_score is None:
