@@ -36,10 +36,11 @@ def build_minimal_scoring_prompt(cv_text: str, jd_text: str) -> str:
         "1. Output ONLY valid JSON. No markdown. No explanation. No extra text.\n"
         "2. Use the EXACT JSON schema provided below. Do not add or rename fields.\n"
         "3. All arrays must exist, even if empty.\n"
-        "4. Keep all reasoning short and to-the-point.\n"
-        "5. First extract ALL skills from the candidate's resume into all_skills array.\n"
-        "6. Then evaluate skills matching with JD: matched_skills, missing_skills, and mandatory_skill_gaps.\n"
-        "7. The shortlisted field is true ONLY if match_score >= threshold.\n\n"
+        "4. BE CONCISE - Keep all text fields short and precise.\n"
+        "5. Extract ONLY actual skills mentioned in resume (not courses/certifications).\n"
+        "6. List certifications/courses separately in certifications array.\n"
+        "7. Evaluate skills matching with JD: matched_skills, missing_skills, mandatory_skill_gaps.\n"
+        "8. The shortlisted field is true ONLY if match_score >= threshold.\n\n"
         
         "This is the ONLY JSON structure you are allowed to output:\n"
         "{\n"
@@ -63,6 +64,7 @@ def build_minimal_scoring_prompt(cv_text: str, jd_text: str) -> str:
         '    "relevant_experience_summary": ""\n'
         '  },\n'
         '  "all_skills": [],\n'
+        '  "certifications": [],\n'
         '  "skills_evaluation": {\n'
         '    "matched_skills": [],\n'
         '    "missing_skills": [],\n'
@@ -78,13 +80,21 @@ def build_minimal_scoring_prompt(cv_text: str, jd_text: str) -> str:
         "}\n\n"
         
         "EXTRACTION AND SCORING RULES:\n"
-        "- First, extract ALL technical and soft skills from the resume into all_skills array\n"
-        "- Then compare with JD to identify matched_skills, missing_skills, mandatory_skill_gaps\n"
+        "- Extract ONLY technical and soft skills into all_skills (NO certifications/courses)\n"
+        "- Extract certifications/courses separately into certifications array\n"
+        "- Keep all_skills concise - only actual skills mentioned in resume\n"
+        "- Compare with JD to identify matched_skills, missing_skills, mandatory_skill_gaps\n"
         "- Skills Match: 50% weight (mandatory skills have highest impact)\n"
         "- Experience Match: 30% weight (compare required vs actual years)\n"
         "- Education Match: 20% weight (exact > related > unrelated)\n"
         "- match_score must be 0-100\n"
         "- shortlisted = true if match_score >= 60, false otherwise\n\n"
+        
+        "REASON FOR DECISION MUST BE PRECISE:\n"
+        "- State exact numbers: 'Required: X years, Candidate has: Y years'\n"
+        "- For education: 'Required: [degree], Candidate has: [degree]'\n"
+        "- For skills: 'Matched X of Y mandatory skills'\n"
+        "- Keep it factual and brief, no verbose explanations\n\n"
         
         "SUGGESTIONS RULE:\n"
         "- If shortlisted = false → suggestions must tell the candidate what to improve.\n"
@@ -173,6 +183,7 @@ def validate_minimal_structure(data: Dict[str, Any]) -> Dict[str, Any]:
             "relevant_experience_summary": ""
         },
         "all_skills": [],
+        "certifications": [],
         "skills_evaluation": {
             "matched_skills": [],
             "missing_skills": [],
@@ -217,6 +228,10 @@ def validate_minimal_structure(data: Dict[str, Any]) -> Dict[str, Any]:
         # All skills
         if "all_skills" in data and isinstance(data["all_skills"], list):
             result["all_skills"] = [str(skill) for skill in data["all_skills"]]
+        
+        # Certifications
+        if "certifications" in data and isinstance(data["certifications"], list):
+            result["certifications"] = [str(cert) for cert in data["certifications"]]
         
         # Skills evaluation
         if "skills_evaluation" in data and isinstance(data["skills_evaluation"], dict):
@@ -319,6 +334,7 @@ def process_candidate(cv_text: str, jd_text: str) -> Dict[str, Any]:
                 "relevant_experience_summary": "Error: Could not extract information from resume"
             },
             "all_skills": [],
+            "certifications": [],
             "skills_evaluation": {
                 "matched_skills": [],
                 "missing_skills": [],
