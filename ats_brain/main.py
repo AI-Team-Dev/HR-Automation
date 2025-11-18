@@ -32,7 +32,7 @@ from utils.scoring import (
     cosine_similarity,
 )
 from utils.skill_extractor import extract_skills
-from llm_engine.scoring import score_candidate
+from llm_engine.ai_engine import process_candidate
 
 class CandidateScoreRequest(BaseModel):
     resume_text: str
@@ -1357,7 +1357,7 @@ async def llm_match_jd_resume(
         # ------------------------------------------------------------------
         # Delegate scoring and shortlisting to Grok LLM engine
         # ------------------------------------------------------------------
-        result = score_candidate(cv_text=resume_text_final, jd_text=jd_text_final)
+        result = process_candidate(cv_text=resume_text_final, jd_text=jd_text_final)
         return JSONResponse(content=result)
 
     except HTTPException:
@@ -1376,7 +1376,7 @@ async def llm_score_candidate(payload: CandidateScoreRequest) -> Dict[str, Any]:
     containing ``match_score``, ``shortlisted``, and ``reasons``.
     """
     try:
-        result = score_candidate(
+        result = process_candidate(
             cv_text=payload.resume_text,
             jd_text=payload.job_description,
         )
