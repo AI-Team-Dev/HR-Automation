@@ -1,6 +1,7 @@
 """FastAPI application for ATS Brain - Simplified Job Description and Resume matching API."""
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
+from pydantic import BaseModel
 from typing import Dict, Any, Optional, Union
 from loguru import logger
 import time
@@ -31,6 +32,12 @@ from utils.scoring import (
     cosine_similarity,
 )
 from utils.skill_extractor import extract_skills
+from llm_engine.scoring import score_candidate
+
+class CandidateScoreRequest(BaseModel):
+    resume_text: str
+    job_description: str
+
 
 # Configure logging
 logger.add("ats_brain.log", rotation="10 MB", level="INFO")
@@ -552,7 +559,7 @@ def root():
     return RedirectResponse(url="/docs", status_code=307)
 
 
-@app.post("/match")
+@app.post("/match", include_in_schema=False)
 async def match_jd_resume(
     # JD Options (choose ONE)
     job_id: Optional[str] = Form(None, description="JD from Database (job_id)"),
@@ -1193,6 +1200,194 @@ async def match_jd_resume(
     except Exception as exc:
         logger.exception("Match processing failed")
         raise HTTPException(status_code=500, detail=f"Match processing failed: {str(exc)}")
+
+
+@app.post("/llm/match")
+async def llm_match_jd_resume(
+    # JD Options (choose ONE)
+    job_id: Optional[str] = Form(None, description="JD from Database (job_id)"),
+    jd_text: Optional[str] = Form(None, description="JD as Text (paste JD here)"),
+    jd_file: Optional[Union[UploadFile, str]] = File(None, description="JD as File (upload file)"),
+
+    # Resume Options (choose ONE)
+    resume_id: Optional[str] = Form(None, description="Resume from Database (resume_id)"),
+    resume_file: Optional[Union[UploadFile, str]] = File(None, description="Resume as File (upload file)"),
+
+    # Advanced control
+    use_ocr: Optional[bool] = Form(True, description="Use OCR fallback for scanned PDFs when text is short"),
+) -> Dict[str, Any]:
+    """LLM-powered JD & Resume matching with the same inputs as /match.
+
+    This endpoint mirrors the JD/Resume input options of the legacy /match
+    endpoint (JD via database/text/file; resume via database/file) but delegates
+    the actual scoring and shortlisting to the Grok-based LLM scoring engine.
+    """
+    try:
+        # ------------------------------------------------------------------
+        # JD handling (mirrors logic from match_jd_resume)
+        # ------------------------------------------------------------------
+        jd_text_final = ""
+
+        # Normalize job_id
+        if job_id and job_id.strip():
+            try:
+                job_id_int = int(job_id.strip())
+            except (ValueError, AttributeError):
+                job_id_int = None
+        else:
+            job_id_int = None
+
+        # Swagger placeholder cleanup
+        if jd_text and jd_text.strip().lower() in {"string", "null"}:
+            jd_text = None
+
+        # Normalize JD file input
+        jd_file_obj: Optional[UploadFile]
+        if isinstance(jd_file, str):
+            jd_file_obj = None if jd_file.strip() == "" else None
+        else:
+            jd_file_obj = jd_file if (jd_file and jd_file.filename and jd_file.filename.strip()) else None
+
+        jd_sources_count = int(bool(job_id_int)) + int(bool(jd_text and jd_text.strip())) + int(bool(jd_file_obj))
+        if jd_sources_count == 0:
+            raise HTTPException(
+                status_code=422,
+                detail="At least one JD source is required: job_id (database), jd_text (text), or jd_file (file upload)",
+            )
+        if jd_sources_count > 1:
+            raise HTTPException(
+                status_code=422,
+                detail="Provide only one JD source: use either job_id, jd_text, or jd_file",
+            )
+
+        if job_id_int:
+            job = get_job_posting(job_id_int)
+            if not job:
+                raise HTTPException(status_code=404, detail=f"Job posting with job_id={job_id_int} not found")
+            jd_text_final = (job.get("JDText") or "").strip()
+            if not jd_text_final:
+                raise HTTPException(status_code=400, detail="Job description text is empty in database")
+        elif jd_text and jd_text.strip():
+            jd_text_final = jd_text.strip()
+            if len(jd_text_final) < 50:
+                raise HTTPException(status_code=400, detail="JD text is too short (minimum 50 characters)")
+        elif jd_file_obj:
+            file_bytes = await jd_file_obj.read()
+            if len(file_bytes) == 0:
+                raise HTTPException(status_code=400, detail="JD file is empty")
+            if jd_file_obj.content_type and "text" in jd_file_obj.content_type:
+                jd_text_final = file_bytes.decode("utf-8", errors="ignore")
+            else:
+                try:
+                    resume_data = extract_resume_text(file_bytes, use_ocr_fallback=False)
+                    jd_text_final = resume_data.get("text", "")
+                except Exception:
+                    try:
+                        jd_text_final = file_bytes.decode("utf-8", errors="ignore")
+                    except Exception:
+                        raise HTTPException(status_code=400, detail="Unable to extract text from JD file")
+            if not jd_text_final or len(jd_text_final.strip()) < 50:
+                raise HTTPException(status_code=400, detail="JD text extraction failed or text is too short")
+            jd_text_final = jd_text_final.strip()
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail="At least one JD source is required: job_id (database), jd_text (text), or jd_file (file upload)",
+            )
+
+        # ------------------------------------------------------------------
+        # Resume handling (mirrors logic from match_jd_resume)
+        # ------------------------------------------------------------------
+        resume_text_final = ""
+
+        if resume_id and resume_id.strip():
+            try:
+                resume_id_int = int(resume_id.strip())
+            except (ValueError, AttributeError):
+                resume_id_int = None
+        else:
+            resume_id_int = None
+
+        resume_file_obj: Optional[UploadFile]
+        if isinstance(resume_file, str):
+            resume_file_obj = None if resume_file.strip() == "" else None
+        else:
+            resume_file_obj = resume_file if (resume_file and resume_file.filename and resume_file.filename.strip()) else None
+
+        resume_sources_count = int(bool(resume_id_int)) + int(bool(resume_file_obj))
+        if resume_sources_count == 0:
+            raise HTTPException(
+                status_code=422,
+                detail="At least one Resume source is required: resume_id (database) or resume_file (file upload)",
+            )
+        if resume_sources_count > 1:
+            raise HTTPException(
+                status_code=422,
+                detail="Provide only one Resume source: use either resume_id or resume_file",
+            )
+
+        if resume_id_int:
+            resume_bytes = get_resume_blob(resume_id_int)
+            if resume_bytes is None:
+                raise HTTPException(status_code=404, detail=f"Resume with resume_id={resume_id_int} not found")
+            resume_data = extract_resume_text(resume_bytes, use_ocr_fallback=False)
+            resume_text_final = resume_data.get("text", "")
+            if use_ocr and (not resume_text_final or len(resume_text_final.strip()) < 100):
+                try:
+                    resume_data = extract_resume_text(resume_bytes, use_ocr_fallback=True)
+                    resume_text_final = resume_data.get("text", resume_text_final)
+                except Exception:
+                    pass
+        elif resume_file_obj:
+            resume_bytes = await resume_file_obj.read()
+            if len(resume_bytes) == 0:
+                raise HTTPException(status_code=400, detail="Resume file is empty")
+            resume_data = extract_resume_text(resume_bytes, use_ocr_fallback=False)
+            resume_text_final = resume_data.get("text", "")
+            if not resume_text_final or len(resume_text_final.strip()) < 50:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Resume text extraction failed or extracted text is too short",
+                )
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail="At least one Resume source is required: resume_id (database) or resume_file (file upload)",
+            )
+
+        # ------------------------------------------------------------------
+        # Delegate scoring and shortlisting to Grok LLM engine
+        # ------------------------------------------------------------------
+        result = score_candidate(cv_text=resume_text_final, jd_text=jd_text_final)
+        return JSONResponse(content=result)
+
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - safety net
+        logger.exception("LLM match processing failed")
+        raise HTTPException(status_code=500, detail=f"LLM match processing failed: {str(exc)}") from exc
+
+
+@app.post("/llm/score-candidate", include_in_schema=False)
+async def llm_score_candidate(payload: CandidateScoreRequest) -> Dict[str, Any]:
+    """Score a candidate using the Grok LLM-based scoring engine.
+
+    This endpoint accepts raw resume and job description text, delegates the
+    scoring to the Grok-backed engine, and returns the structured JSON
+    containing ``match_score``, ``shortlisted``, and ``reasons``.
+    """
+    try:
+        result = score_candidate(
+            cv_text=payload.resume_text,
+            jd_text=payload.job_description,
+        )
+        return JSONResponse(content=result)
+    except (ValueError, RuntimeError) as exc:
+        logger.error(f"LLM scoring failed: {exc}")
+        raise HTTPException(status_code=502, detail="LLM scoring failed") from exc
+    except Exception as exc:  # pragma: no cover - safety net
+        logger.exception("Unexpected error in /llm/score-candidate")
+        raise HTTPException(status_code=500, detail="Internal server error during LLM scoring") from exc
 
 
 if __name__ == "__main__":

@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
     db_conn: Optional[str] = os.getenv("DB_CONN")
+    GROK_API_KEY: str
+    MODEL_NAME: str = "grok-4-fast-reasoning"
     
     class Config:
         env_file = ".env"
