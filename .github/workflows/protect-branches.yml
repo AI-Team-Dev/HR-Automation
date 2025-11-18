@@ -1,0 +1,19 @@
+name: Protect Branches
+
+on:
+  pull_request:
+    branches:
+      - production
+      - development
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show message
+        run: echo "✅ Pull request check running. All good!"
+
+      # Here you can add your test or build commands if you want
+      # For example:
+      # - name: Run tests
+      #   run: npm test

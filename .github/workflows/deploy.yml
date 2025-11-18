@@ -1,0 +1,20 @@
+name: Deploy App
+
+on:
+  push:
+    branches:
+      - production
+      - development
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build project (example)
+        run: echo "Building project..."  # Replace with npm run build or your actual build command
+
+      - name: Deploy to server
+        run: echo "🚀 Deploying now!"  # Replace this with your actual deploy command
