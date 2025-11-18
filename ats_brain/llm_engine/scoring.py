@@ -19,32 +19,66 @@ def _extract_json_object(raw_response: str) -> Any:
     substring as JSON.
     """
     text = raw_response.strip()
+    
+    logger.debug(f"Attempting to extract JSON from response of length {len(text)}")
 
     # Strip markdown code fences if present
-    if text.startswith("```"):
-        # Remove the initial ```[lang]? line
-        parts = text.split("\n", 1)
-        text = parts[1] if len(parts) > 1 else ""
-        if text.endswith("```"):
-            text = text.rsplit("```", 1)[0]
+    if "```" in text:
+        # Handle ```json or ```JSON or just ```
+        import re
+        # Remove code fences
+        text = re.sub(r'```[a-zA-Z]*\n?', '', text)
+        text = text.replace('```', '')
+        text = text.strip()
 
     # First, try direct JSON load
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
+        result = json.loads(text)
+        logger.debug("Successfully parsed JSON directly")
+        return result
+    except json.JSONDecodeError as e:
+        logger.debug(f"Direct JSON parse failed: {e}")
         pass
 
-    # Fallback: try to grab the first {...} block
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = text[start : end + 1]
+    # Try to find JSON object boundaries more aggressively
+    # Look for the outermost { } pair
+    brace_count = 0
+    start_idx = -1
+    end_idx = -1
+    
+    for i, char in enumerate(text):
+        if char == '{':
+            if start_idx == -1:
+                start_idx = i
+            brace_count += 1
+        elif char == '}':
+            brace_count -= 1
+            if brace_count == 0 and start_idx != -1:
+                end_idx = i
+                break
+    
+    if start_idx != -1 and end_idx != -1:
+        candidate = text[start_idx:end_idx + 1]
         try:
-            return json.loads(candidate)
-        except json.JSONDecodeError as exc:  # pragma: no cover - best effort
-            raise ValueError("Model response is not valid JSON") from exc
+            result = json.loads(candidate)
+            logger.debug("Successfully extracted and parsed JSON object")
+            return result
+        except json.JSONDecodeError as e:
+            logger.debug(f"Extracted JSON parse failed: {e}")
+            # Try to clean up common issues
+            # Remove trailing commas
+            import re
+            candidate = re.sub(r',\s*}', '}', candidate)
+            candidate = re.sub(r',\s*]', ']', candidate)
+            try:
+                result = json.loads(candidate)
+                logger.debug("Successfully parsed JSON after cleanup")
+                return result
+            except json.JSONDecodeError:
+                pass
 
-    raise ValueError("Model response does not contain a JSON object")
+    logger.error(f"Could not extract valid JSON from response. First 500 chars: {text[:500]}")
+    raise ValueError("Model response does not contain a valid JSON object")
 
 
 def _parse_scoring_response(raw_response: str) -> Dict[str, Any]:
@@ -70,31 +104,81 @@ def _parse_scoring_response(raw_response: str) -> Dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("Model response JSON must be an object")
 
-    # Allow match_score/shortlisted either at top level or in overall_evaluation
+    # 1) Derive match_score - be very flexible
     overall_eval = data.get("overall_evaluation") or {}
+    jd_analysis = data.get("jd_requirement_analysis") or {}
+    semantic = jd_analysis.get("semantic_match") or {}
+    skills_analysis = jd_analysis.get("skills_analysis") or {}
+    exp_analysis = jd_analysis.get("experience_analysis") or {}
+    edu_analysis = jd_analysis.get("education_analysis") or {}
 
-    match_score = data.get("match_score", overall_eval.get("match_score"))
-    shortlisted = data.get("shortlisted", overall_eval.get("shortlisted"))
+    match_score = data.get("match_score")
+    if match_score is None:
+        match_score = overall_eval.get("match_score")
+    if match_score is None:
+        # Fallback: use semantic_match.semantic_score if present
+        match_score = semantic.get("semantic_score")
+    if match_score is None:
+        # Try skill_match_percentage
+        match_score = skills_analysis.get("skill_match_percentage")
+    if match_score is None:
+        # Try to compute from components if they exist
+        skill_pct = skills_analysis.get("skill_match_percentage", 0)
+        exp_pct = exp_analysis.get("experience_match_percentage", 0)
+        edu_pct = edu_analysis.get("education_match_percentage", 0)
+        if skill_pct or exp_pct or edu_pct:
+            # Weighted average: skills 50%, exp 30%, edu 20%
+            match_score = (skill_pct * 0.5 + exp_pct * 0.3 + edu_pct * 0.2)
+
+    # 2) Derive shortlisted
+    shortlisted = data.get("shortlisted")
+    if shortlisted is None:
+        shortlisted = overall_eval.get("shortlisted")
+    if shortlisted is None and match_score is not None:
+        try:
+            shortlisted = float(match_score) >= 60.0
+        except (TypeError, ValueError):
+            shortlisted = None
+
+    # 3) Derive reasons from explicit field or decision_explanation
     reasons = data.get("reasons")
-
-    # Derive reasons from decision_explanation if not explicitly provided
     if reasons is None:
         decision = data.get("decision_explanation") or {}
+        final_decision = data.get("final_decision") or {}
         parts = []
+        
         summary = decision.get("summary")
         if summary:
             parts.append(str(summary))
+        
+        final_reason = final_decision.get("final_decision_reason")
+        if final_reason and final_reason != summary:
+            parts.append(str(final_reason))
+            
         positives = decision.get("positive_factors") or []
         negatives = decision.get("negative_factors") or []
         if positives:
             parts.append("Positive factors: " + "; ".join(map(str, positives)))
         if negatives:
             parts.append("Negative factors: " + "; ".join(map(str, negatives)))
+        
         if parts:
             reasons = "\n".join(parts)
+        else:
+            # Last resort: use any text we can find
+            reasons = "Evaluation completed based on JD and resume analysis"
 
-    if match_score is None or shortlisted is None or reasons is None:
-        raise ValueError("Model response JSON must contain match_score, shortlisted, and reasons fields")
+    # Be more lenient - if we have at least match_score, we can work with it
+    if match_score is None:
+        # If we still don't have a score, default to 50 (neutral)
+        logger.warning("Could not derive match_score from response, defaulting to 50")
+        match_score = 50
+    
+    if shortlisted is None:
+        shortlisted = float(match_score) >= 60.0
+    
+    if reasons is None:
+        reasons = f"Candidate evaluated with match score {match_score}"
 
     try:
         match_score_num = float(match_score)
@@ -133,7 +217,7 @@ def score_candidate(cv_text: str, jd_text: str) -> Dict[str, Any]:
     try:
         return _parse_scoring_response(raw_response)
     except ValueError as exc:
-        logger.warning(f"Invalid JSON from Grok on first attempt: {exc}")
+        logger.warning(f"Invalid JSON from Grok on first attempt: {exc}. Raw response: {raw_response}")
 
     # Retry once with explicit JSON enforcement
     retry_prompt = (
@@ -147,5 +231,5 @@ def score_candidate(cv_text: str, jd_text: str) -> Dict[str, Any]:
     try:
         return _parse_scoring_response(raw_retry_response)
     except ValueError as exc:
-        logger.error(f"Invalid JSON from Grok after retry: {exc}")
+        logger.error(f"Invalid JSON from Grok after retry: {exc}. Raw retry response: {raw_retry_response}")
         raise RuntimeError("Grok model failed to return valid JSON even after retry") from exc

@@ -706,6 +706,8 @@ async def match_jd_resume(
         # Process Resume
         # ========================================================================
         resume_text_final = ""
+        # For LLM matching we always allow OCR fallback for low-text PDFs
+        use_ocr = True
         candidate_name = None
         resume_personal: Dict[str, Any] = {}
         resume_source = ""
@@ -1212,9 +1214,6 @@ async def llm_match_jd_resume(
     # Resume Options (choose ONE)
     resume_id: Optional[str] = Form(None, description="Resume from Database (resume_id)"),
     resume_file: Optional[Union[UploadFile, str]] = File(None, description="Resume as File (upload file)"),
-
-    # Advanced control
-    use_ocr: Optional[bool] = Form(True, description="Use OCR fallback for scanned PDFs when text is short"),
 ) -> Dict[str, Any]:
     """LLM-powered JD & Resume matching with the same inputs as /match.
 
