@@ -14,6 +14,7 @@ from datetime import datetime
 from loguru import logger
 
 from .grok_client import GrokClient
+from .date_utils import get_current_date_str
 
 
 def build_minimal_scoring_prompt(cv_text: str, jd_text: str) -> str:
@@ -26,8 +27,13 @@ def build_minimal_scoring_prompt(cv_text: str, jd_text: str) -> str:
     Returns:
         The formatted prompt string for the LLM
     """
+    date_str = get_current_date_str()
+    
     return (
         "You are an AI engine inside an HR Automation System.\n"
+        f"IMPORTANT: Today's date is {date_str}. Use this date for all experience calculations.\n"
+        "When you see 'Present', 'Current', 'Till Date', or similar terms in employment dates, "
+        f"calculate the duration up to {date_str}.\n\n"
         "Your job is to extract structured candidate information from resumes, "
         "compare it with a given Job Description, and output a STRICT minimal JSON "
         "containing only what is required for shortlisting decisions.\n\n"
