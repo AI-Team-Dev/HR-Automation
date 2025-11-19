@@ -12,7 +12,7 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0   # IMPORTANT: Allow full commit history
+        fetch-depth: 0
 
     - name: Configure Git
       run: |
@@ -26,5 +26,4 @@ jobs:
       run: |
         echo "Pushing to Hugging Face Space $HF_SPACE_NAME"
         git remote add space "https://hf_${HF_SPACE_TOKEN}@huggingface.co/spaces/${HF_SPACE_NAME}.git"
-        # Push your development branch into the Space's main branch
         git push space development:main --force
