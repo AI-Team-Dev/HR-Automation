@@ -33,6 +33,8 @@ from utils.scoring import (
 )
 from utils.skill_extractor import extract_skills
 from llm_engine.ai_engine import process_candidate
+from utils.education_mapping import mapEducationToSector
+from utils.location_parser import matchLocation
 
 class CandidateScoreRequest(BaseModel):
     resume_text: str
@@ -745,6 +747,8 @@ async def match_jd_resume(
                 detail="Provide only one Resume source: use either resume_id or resume_file"
             )
 
+        candidate_location = {}
+
         if resume_id_int:
             # Option 1: Database
             resume_bytes = get_resume_blob(resume_id_int)
@@ -766,6 +770,7 @@ async def match_jd_resume(
                     pass
             resume_skills = resume_data.get("skills", [])
             resume_personal = resume_data.get("personal_details", {}) or {}
+            candidate_location = resume_data.get("candidate_location", {}) or {}
             # Prefer extracting candidate name from original resume text; fallback to DB metadata
             candidate_name = extract_candidate_name_from_text(resume_data.get("raw_text", resume_text_final))
             if not candidate_name and resume_meta:
@@ -782,6 +787,7 @@ async def match_jd_resume(
             resume_text_final = resume_data.get("text", "")
             resume_skills = resume_data.get("skills", [])
             resume_personal = resume_data.get("personal_details", {}) or {}
+            candidate_location = resume_data.get("candidate_location", {}) or {}
             
             if not resume_text_final or len(resume_text_final.strip()) < 50:
                 raise HTTPException(
@@ -818,6 +824,7 @@ async def match_jd_resume(
             title=jd_title,
             compute_embedding_vector=True
         )
+        jd_locations = jd_parsed.get("locations", {}) or {}
         
         # Normalize skills and detect required ones
         jd_skills = normalize_skills(jd_parsed.get("skills", []))
@@ -897,6 +904,12 @@ async def match_jd_resume(
         req_discipline = extract_discipline((str(req_edu_text) + " " + jd_text_final) if req_edu_text else jd_text_final)
         cand_level = extract_education_level(resume_text_final)
         cand_discipline = extract_discipline(resume_text_final)
+
+        # Sector-based normalization to make education matching resilient to
+        # variations in degree titles and related fields.
+        req_sector = mapEducationToSector(str(req_edu_text) if req_edu_text else jd_text_final)
+        cand_sector = mapEducationToSector(resume_text_final)
+
         candidate_education = None
         if cand_level == "phd":
             candidate_education = "PhD"
@@ -906,19 +919,23 @@ async def match_jd_resume(
             candidate_education = "Bachelor"
         elif cand_level == "diploma":
             candidate_education = "Diploma"
+
         # Education matching rules
-        if req_level is None and req_discipline is None:
+        if req_level is None and req_sector is None:
             education_match = True
         else:
             # Level must satisfy when specified
             level_ok = True
             if req_level is not None:
                 level_ok = cand_level is not None and EDU_RANK[cand_level] >= EDU_RANK[req_level]
-            # Discipline must satisfy when specified
-            disc_ok = True
-            if req_discipline is not None:
-                disc_ok = (cand_discipline is not None and cand_discipline == req_discipline)
-            education_match = bool(level_ok and disc_ok)
+
+            # Sector must satisfy when specified (sector-based matching is
+            # preferred over exact discipline string equality).
+            sector_ok = True
+            if req_sector is not None:
+                sector_ok = cand_sector is not None and cand_sector == req_sector
+
+            education_match = bool(level_ok and sector_ok)
 
         # Compute 4-factor weights and final score now that experience and education are available
         w_sem, w_skill, w_exp, w_edu = compute_auto_weights_4f(
@@ -953,14 +970,14 @@ async def match_jd_resume(
         )
 
         # Enrich reasoning with education/discipline and explicit differences
-        if education_match is True and (req_level is not None or req_discipline is not None):
+        if education_match is True and (req_level is not None or req_sector is not None):
             if req_level is not None and candidate_education:
                 reasoning.setdefault("strengths", []).append(
                     f"Education meets requirement: {candidate_education} (required: {req_level.title()})"
                 )
-            if req_discipline is not None and cand_discipline == req_discipline:
+            if req_sector is not None and cand_sector == req_sector:
                 reasoning.setdefault("strengths", []).append(
-                    f"Discipline match: {cand_discipline}"
+                    f"Education sector match: {cand_sector}"
                 )
         elif education_match is False:
             # Explicitly note level or discipline mismatches
@@ -968,12 +985,12 @@ async def match_jd_resume(
                 reasoning.setdefault("weaknesses", []).append(
                     f"Education level below requirement: candidate {candidate_education}, required {req_level.title()}"
                 )
-            if req_discipline is not None and cand_discipline != req_discipline:
+            if req_sector is not None and cand_sector != req_sector:
                 reasoning.setdefault("weaknesses", []).append(
-                    f"Discipline mismatch: required {req_discipline}, candidate {cand_discipline or 'unspecified'}"
+                    f"Education sector mismatch: required {req_sector}, candidate {cand_sector or 'unspecified'}"
                 )
                 reasoning.setdefault("opportunities", []).append(
-                    f"Gain exposure/certification in {req_discipline} domain"
+                    f"Gain exposure/certification in {req_sector} domain"
                 )
         else:
             # JD has no explicit requirement; acknowledge candidate degree when present
@@ -1038,15 +1055,22 @@ async def match_jd_resume(
 
         # Score breakdown (with 4 factors and weights)
         score_breakdown = {
-            "final": round(float(final_similarity), 3),
-            "factors": {
-                "semantic_similarity": {"score": round(float(similarity_score), 3), "weight": round(w_sem, 3)},
-                "skill_overlap": {"score": round(float(skill_overlap), 3), "weight": round(w_skill, 3)},
-                "experience": {"score": round(float(experience_score), 3), "weight": round(w_exp, 3)},
-                "education": {"score": round(float(education_score), 3), "weight": round(w_edu, 3)}
-            },
-            "required_skill_penalty": (len(missing_required) if 'missing_required' in locals() else 0)
+          "final": round(float(final_similarity), 3),
+          "factors": {
+              "semantic_similarity": {"score": round(float(similarity_score), 3), "weight": round(w_sem, 3)},
+              "skill_overlap": {"score": round(float(skill_overlap), 3), "weight": round(w_skill, 3)},
+              "experience": {"score": round(float(experience_score), 3), "weight": round(w_exp, 3)},
+              "education": {"score": round(float(education_score), 3), "weight": round(w_edu, 3)}
+          },
+          "required_skill_penalty": (len(missing_required) if 'missing_required' in locals() else 0)
         }
+
+        # ------------------------------------------------------------------
+        # Location matching (purely additive score component)
+        # ------------------------------------------------------------------
+        jd_locations = extract_locations(jd_text_final)
+        candidate_location = extract_location(resume_text_final)
+        location_evaluation = matchLocation(jd_locations, candidate_location)
 
         # Generate match_id now that scoring is complete
         match_id = str(uuid.uuid4())
@@ -1070,6 +1094,7 @@ async def match_jd_resume(
                             "skills": jd_skills,
                             "summary": jd_parsed.get("summary"),
                             "source": jd_source,
+                            "locations": jd_locations
                         }, ensure_ascii=False),
                         "MatchScore": None,
                         "Embedding": embedding_bytes,
@@ -1113,7 +1138,8 @@ async def match_jd_resume(
                             "semantic": float(similarity_score),
                             "skill_overlap": float(skill_overlap),
                             "experience_score": float(experience_score),
-                            "education_score": float(education_score)
+                            "education_score": float(education_score),
+                            "location": location_evaluation,
                         }
                     }, ensure_ascii=False),
                     "MatchScore": match_percentage,
@@ -1157,6 +1183,7 @@ async def match_jd_resume(
                 "verdict": verdict
             },
             "scoring_factors": score_breakdown,
+            "location_evaluation": location_evaluation,
             "skill_analysis": {
                 "required_skills": jd_skills,
                 "candidate_skills": resume_skills,

@@ -6,6 +6,7 @@ import re
 
 from utils.text_cleaner import normalize_text
 from utils.skill_extractor import extract_skills
+from utils.location_parser import extract_candidate_location
 
 
 def _is_pdf(data: bytes) -> bool:
@@ -198,6 +199,12 @@ def extract_resume_text(resume_bytes: bytes, use_ocr_fallback: bool = False) -> 
     # Extract personal/contact details on original text to better preserve header structure
     personal_details = _extract_personal_details(original_text)
 
+    # Derive a normalized candidate location structure in an additive way,
+    # based on the resume text and detected personal details (e.g. address
+    # or explicit location fields). This does not change existing parsing
+    # behavior and is safe to ignore by callers that do not need it.
+    candidate_location = extract_candidate_location(original_text, personal_details)
+
     return {
         "text": normalized_text,
         "raw_text": original_text,
@@ -205,6 +212,7 @@ def extract_resume_text(resume_bytes: bytes, use_ocr_fallback: bool = False) -> 
         "file_type": file_type,
         "extraction_method": extraction_method,
         "personal_details": personal_details,
+        "candidate_location": candidate_location,
     }
 
 

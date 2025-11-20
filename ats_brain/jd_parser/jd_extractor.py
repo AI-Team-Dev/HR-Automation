@@ -6,6 +6,7 @@ from loguru import logger
 from utils.text_cleaner import normalize_text, split_sentences
 from utils.skill_extractor import extract_skills
 from utils.scoring import compute_embedding, serialize_embedding
+from utils.location_parser import extract_jd_locations
 
 
 EXPERIENCE_REGEX = re.compile(
@@ -176,6 +177,11 @@ def parse_job_description(
     experience = extract_experience(normalized_text)
     education = extract_education(normalized_text)
     skills = extract_skills(normalized_text)
+    # Location requirements are extracted from the raw JD text to preserve
+    # phrases like "Mumbai only", lists such as "India (Mumbai, Pune, ...)",
+    # and other location hints. This is additive and does not affect existing
+    # parsing logic.
+    locations = extract_jd_locations(jd_text)
     
     # Create summary (first 2 sentences)
     sentences = split_sentences(normalized_text)
@@ -192,6 +198,7 @@ def parse_job_description(
         "skills": skills,
         "summary": summary,
         "jd_text": normalized_text,
+        "locations": locations,
     }
     
     # Compute embedding if requested
