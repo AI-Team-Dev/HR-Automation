@@ -69,6 +69,21 @@ def build_minimal_scoring_prompt(cv_text: str, jd_text: str) -> str:
         '    "total_years": "",\n'
         '    "relevant_experience_summary": ""\n'
         '  },\n'
+        '  "experience_timeline": [\n'
+        '    {\n'
+        '      "role": "",\n'
+        '      "company": "",\n'
+        '      "start_date": "",\n'
+        '      "end_date": "",\n'
+        '      "normalized_start_date": "",\n'
+        '      "normalized_end_date": ""\n'
+        '    }\n'
+        '  ],\n'
+        '  "total_employment_gap": {\n'
+        '    "years": 0,\n'
+        '    "months": 0,\n'
+        '    "summary": ""\n'
+        '  },\n'
         '  "all_skills": [],\n'
         '  "certifications": [],\n'
         '  "skills_evaluation": {\n'
@@ -95,6 +110,12 @@ def build_minimal_scoring_prompt(cv_text: str, jd_text: str) -> str:
         "- Education Match: 20% weight (exact > related > unrelated)\n"
         "- match_score must be 0-100\n"
         "- shortlisted = true if match_score >= 60, false otherwise\n\n"
+        "EMPLOYMENT TIMELINE AND TOTAL GAP RULES:\n"
+        "- experience_timeline must list individual roles with start_date and end_date extracted from the resume.\n"
+        "- Normalize dates into normalized_start_date and normalized_end_date using YYYY-MM format (or empty string for ongoing roles).\n"
+        "- Sort experience_timeline from most recent to oldest based on normalized dates.\n"
+        "- Use the ordered experience_timeline to identify all gaps between consecutive roles and calculate their durations in years and months.\n"
+        "- Sum all individual gaps to produce total_employment_gap with numeric years/months and a concise summary string (e.g., 'Total Experience Gap: 2 years 5 months'). Do not output per-job gap details.\n\n"
         
         "REASON FOR DECISION MUST BE PRECISE:\n"
         "- State exact numbers: 'Required: X years, Candidate has: Y years'\n"
@@ -188,6 +209,12 @@ def validate_minimal_structure(data: Dict[str, Any]) -> Dict[str, Any]:
             "total_years": "",
             "relevant_experience_summary": ""
         },
+        "experience_timeline": [],
+        "total_employment_gap": {
+            "years": 0,
+            "months": 0,
+            "summary": "",
+        },
         "all_skills": [],
         "certifications": [],
         "skills_evaluation": {
@@ -230,6 +257,23 @@ def validate_minimal_structure(data: Dict[str, Any]) -> Dict[str, Any]:
         if "experience" in data and isinstance(data["experience"], dict):
             result["experience"]["total_years"] = str(data["experience"].get("total_years", ""))
             result["experience"]["relevant_experience_summary"] = str(data["experience"].get("relevant_experience_summary", ""))
+
+        # Experience timeline (optional, for employment gap analysis)
+        if "experience_timeline" in data and isinstance(data["experience_timeline"], list):
+            normalized_timeline: List[Dict[str, Any]] = []
+            for item in data["experience_timeline"]:
+                if isinstance(item, dict):
+                    normalized_timeline.append(
+                        {
+                            "role": str(item.get("role", "")),
+                            "company": str(item.get("company", "")),
+                            "start_date": str(item.get("start_date", "")),
+                            "end_date": str(item.get("end_date", "")),
+                            "normalized_start_date": str(item.get("normalized_start_date", "")),
+                            "normalized_end_date": str(item.get("normalized_end_date", "")),
+                        }
+                    )
+            result["experience_timeline"] = normalized_timeline
         
         # All skills
         if "all_skills" in data and isinstance(data["all_skills"], list):
@@ -238,6 +282,10 @@ def validate_minimal_structure(data: Dict[str, Any]) -> Dict[str, Any]:
         # Certifications
         if "certifications" in data and isinstance(data["certifications"], list):
             result["certifications"] = [str(cert) for cert in data["certifications"]]
+
+        # Total employment gap: always derive it from the experience_timeline dates
+        total_gap = _calculate_total_employment_gap(result.get("experience_timeline", []))
+        result["total_employment_gap"] = total_gap
         
         # Skills evaluation
         if "skills_evaluation" in data and isinstance(data["skills_evaluation"], dict):
@@ -275,6 +323,119 @@ def validate_minimal_structure(data: Dict[str, Any]) -> Dict[str, Any]:
             result["suggestions"] = "Focus on acquiring the missing mandatory skills and gaining more relevant experience."
     
     return result
+
+
+def _calculate_total_employment_gap(experience_timeline: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Calculate the total employment gap from a normalized experience timeline.
+
+    This helper assumes that each item in experience_timeline may contain
+    "normalized_start_date" and "normalized_end_date" in "YYYY-MM" format.
+    If normalized dates are missing, it falls back to raw "start_date" and
+    "end_date" when they appear to be in a parseable year-month form.
+
+    The function:
+    - Sorts experiences from most recent to oldest using end/start dates
+    - Computes gaps between consecutive roles
+    - Sums all gaps into total years and months
+    - Returns a structure with numeric years/months and a concise summary
+    """
+
+    def _parse_ym(value: str) -> Optional[datetime]:
+        value = (value or "").strip().replace(",", "")
+        if not value:
+            return None
+
+        # Try strict numeric year-month formats first
+        for fmt in ("%Y-%m", "%Y/%m", "%Y.%m"):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                continue
+
+        # Common textual month formats: "Jan 2020", "January 2020", etc.
+        for fmt in ("%b %Y", "%B %Y", "%b-%Y", "%B-%Y"):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                continue
+
+        # If only year is given, treat as January of that year
+        try:
+            if len(value) == 4 and value.isdigit():
+                return datetime.strptime(value + "-01", "%Y-%m")
+        except ValueError:
+            pass
+        return None
+
+    # Normalize timeline entries into parseable start/end datetimes
+    normalized: List[Dict[str, Any]] = []
+    for item in experience_timeline or []:
+        if not isinstance(item, dict):
+            continue
+
+        n_start = item.get("normalized_start_date") or item.get("start_date") or ""
+        n_end = item.get("normalized_end_date") or item.get("end_date") or ""
+
+        start_dt = _parse_ym(str(n_start))
+        end_dt = _parse_ym(str(n_end))
+
+        # If no end date (e.g., ongoing role), use start date as both to avoid
+        # treating current employment as a gap contributor here.
+        if start_dt is None and end_dt is None:
+            continue
+        if start_dt is None and end_dt is not None:
+            start_dt = end_dt
+        if end_dt is None and start_dt is not None:
+            end_dt = start_dt
+
+        normalized.append({
+            "role": item.get("role", ""),
+            "start": start_dt,
+            "end": end_dt,
+        })
+
+    if len(normalized) < 2:
+        return {
+            "years": 0,
+            "months": 0,
+            "summary": "Total Experience Gap: 0 years 0 months",
+        }
+
+    # Sort from oldest to most recent by start then end date
+    normalized.sort(key=lambda x: (x["start"], x["end"]))
+
+    total_months_gap = 0
+
+    for idx in range(len(normalized) - 1):
+        older = normalized[idx]
+        newer = normalized[idx + 1]
+
+        end_older = older["end"]
+        start_newer = newer["start"]
+
+        # Gap is the time between end_older and start_newer; if start_newer is
+        # on or before end_older, there is no positive gap to add.
+        if start_newer <= end_older:
+            continue
+
+        # Convert to full-month difference
+        year_diff = start_newer.year - end_older.year
+        month_diff = start_newer.month - end_older.month
+        months_gap = year_diff * 12 + month_diff
+
+        if months_gap > 0:
+            total_months_gap += months_gap
+
+    years = total_months_gap // 12
+    months = total_months_gap % 12
+
+    summary = f"Total Experience Gap: {years} years {months} months"
+
+    return {
+        "years": years,
+        "months": months,
+        "summary": summary,
+    }
 
 
 def process_candidate(cv_text: str, jd_text: str) -> Dict[str, Any]:
