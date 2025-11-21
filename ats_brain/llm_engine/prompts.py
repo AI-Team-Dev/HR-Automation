@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from datetime import datetime
+from .date_utils import get_current_date_str
 
 
 def build_scoring_prompt(cv_text: str, jd_text: str) -> str:
@@ -108,10 +109,13 @@ def build_scoring_prompt(cv_text: str, jd_text: str) -> str:
         is not moving forward)
       }
     """
+    date_str = get_current_date_str()
 
     return (
         "You are an AI assistant helping to evaluate how well a candidate's resume "
-        "matches a given job description.\n\n"
+        "matches a given job description.\n"
+        f"IMPORTANT: Today's date is {date_str}. Use this date for all experience calculations.\n"
+        f"When calculating experience duration, if you see 'Present', 'Current', 'Till Date', or similar terms, calculate up to {date_str}.\n\n"
         "Carefully read BOTH documents below and then respond with a single JSON "
         "object only. Do not include any text before or after the JSON. Do not "
         "use markdown. Do not include comments. The JSON must be strictly valid "

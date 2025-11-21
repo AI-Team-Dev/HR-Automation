@@ -7,12 +7,14 @@ for use as the LLM-powered scoring engine.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any, Dict
 
 import requests
 from loguru import logger
 
 from core.config import settings
+from .date_utils import get_current_date_str
 
 
 class GrokClient:
@@ -46,9 +48,16 @@ class GrokClient:
             "Content-Type": "application/json",
         }
 
+        # Get current date for system message
+        date_str = get_current_date_str()
+        
         payload: Dict[str, Any] = {
             "model": self.model,
             "messages": [
+                {
+                    "role": "system",
+                    "content": f"You are an AI assistant. Today's date is {date_str}. When calculating experience durations or any time-based calculations, use this as the current date. If you see employment dates with 'Present', 'Current', 'Till Date', or similar terms, calculate up to {date_str}."
+                },
                 {
                     "role": "user",
                     "content": prompt,
