@@ -1,21 +1,80 @@
-MIT License
+Company Name: TechBerry InfoTech Pvt. Ltd.
+License Name: Proprietary Software License
+Version: 1.0
+Date: 10 November 2025
 
-Copyright (c) 2025 AI-Team-Dev
+Copyright (c) 2025
+TechBerry InfoTech Pvt. Ltd.
+All Rights Reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. GRANT OF LICENSE
+Permission is granted exclusively to authorized personnel within TechBerry InfoTech Pvt. Ltd. 
+to install, access, and use this software strictly for internal business operations only.
+No rights are granted for external, public, commercial, or client-facing usage unless 
+explicitly authorized in writing by the Company.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+2. RESTRICTIONS
+Unauthorized use of this software is strictly prohibited. This includes, but is not limited to:
+- Copying, duplicating, or reproducing the software in any form  
+- Modifying, altering, translating, or creating derivative works  
+- Distributing, sharing, publishing, selling, leasing, or sublicensing the software  
+- Reverse engineering, decompiling, disassembling, or attempting to extract any source code  
+- Providing access to any third party, including clients, vendors, freelancers, external 
+  developers, or contractors without prior written approval from the Company  
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Any misconduct shall be treated as unlawful use of company-owned intellectual property.
+
+3. CONFIDENTIALITY
+This software, including but not limited to its source code, design structure, documentation, 
+logic flow, algorithms, databases, integrations, UI/UX assets, and all related materials, is 
+confidential and proprietary to TechBerry InfoTech Pvt. Ltd.
+
+Authorized users must:
+- Maintain absolute confidentiality  
+- Prevent unauthorized access or disclosure  
+- Avoid transmission or exposure of any part of the software or its assets  
+
+4. OWNERSHIP
+All intellectual property rights, titles, and ownership of this software shall remain solely 
+with TechBerry InfoTech Pvt. Ltd.  
+This license does not transfer any ownership rights to the user.
+
+5. TERMINATION
+TechBerry InfoTech Pvt. Ltd. reserves the right to revoke this license at any time, with or 
+without prior notice.  
+Upon termination, the user must immediately discontinue all usage and destroy all copies of 
+the software in their possession.
+
+6. COMPLIANCE & AUDIT RIGHTS
+The Company may, at its discretion, conduct audits or compliance checks to verify proper 
+license usage.  
+Failure to comply will result in immediate termination and potential legal escalation.
+
+7. LEGAL ACTION & DAMAGES
+Any unauthorized copying, distribution, modification, or reverse engineering is considered an 
+intellectual property violation.
+
+Violators may face:
+- Civil lawsuits  
+- Criminal charges  
+- Financial penalties and damages  
+- Injunctions and legal restraining orders  
+- Court proceedings under applicable law  
+
+TechBerry InfoTech Pvt. Ltd. reserves full rights to pursue legal action to the maximum 
+extent permitted by law.
+
+8. NO WARRANTY
+This software is provided “AS IS” without any warranties of any kind — express, implied, or statutory.  
+The Company disclaims all liability for errors, defects, data loss, or operational issues.
+
+9. LIMITATION OF LIABILITY
+Under no circumstances shall TechBerry InfoTech Pvt. Ltd. be liable for indirect, incidental, 
+special, consequential, or punitive damages, including but not limited to loss of profits, 
+data, goodwill, or business interruption.
+
+10. ACCEPTANCE OF TERMS
+By installing, accessing, or using this software, the user acknowledges that they have read, 
+understood, and agree to be bound by all terms of this Proprietary Software License.
+
+END OF LICENSE
